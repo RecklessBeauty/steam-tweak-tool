@@ -3,10 +3,11 @@
 #include <sstream>
 #include <algorithm>
 #include <filesystem>
+#include <string>
 #include "steam-tweak-tool/autoupdate_disable.hpp"
+#include "steam-tweak-tool/utility.hpp"
 
 using namespace std;
-namespace fs = std::filesystem;
 
 AutoUpdateDisabler::AutoUpdateDisabler() {}
 
@@ -33,12 +34,25 @@ string AutoUpdateDisabler::replaceStateFlags()
 bool AutoUpdateDisabler::iterateSteamApps(const string &steamAppsDirectory)
 {
     int modifiedCount = 0;
+    FileUtility fileUtility;
 
-    for (const auto &entry : fs::directory_iterator(steamAppsDirectory))
+    // Reuse getAcfID + sortAcfID so appmanifest files are processed in sorted
+    // app id order, consistent with option 3, and only appmanifests are touched.
+    vector<int> acfIds = fileUtility.getAcfID(steamAppsDirectory);
+    fileUtility.sortAcfID(acfIds);
+
+    for (const int &id : acfIds)
     {
-        if (fs::is_regular_file(entry.status()) && entry.path().extension() == ".acf")
+        string outPath = "appmanifest_" + to_string(id) + ".acf";
+        string filePath = steamAppsDirectory + "/" + outPath;
+
+        try
         {
-            ifstream file(entry.path().string());
+            ifstream file(filePath);
+            if (!file)
+            {
+                throw runtime_error("Failed to open file for reading: " + outPath);
+            }
             stringstream buffer;
             string line;
 
@@ -60,18 +74,43 @@ bool AutoUpdateDisabler::iterateSteamApps(const string &steamAppsDirectory)
 
             file.close();
 
-            ofstream file_of(entry.path().string());
-            if (!file_of)
-            {
-                throw runtime_error("Failed to open file for writing: " + entry.path().string());
-            }
-            file_of << buffer.str();
-            file_of.close();
+            // Temporarily remove the read-only attribute (if set) so the file
+            // can be written, then restore it afterwards.
+            bool wasReadOnly = fileUtility.isFileReadOnly(filePath);
+            bool clearedReadOnly = wasReadOnly && fileUtility.setFileReadOnly(filePath, false);
 
-            string outPath = entry.path().filename().string();
-            // replace(outPath.begin(), outPath.end(), '\\', '/');
+            ofstream file_of(filePath);
+            bool opened = static_cast<bool>(file_of);
+            if (opened)
+            {
+                file_of << buffer.str();
+                file_of.close();
+            }
+
+            if (clearedReadOnly)
+            {
+                if (!fileUtility.setFileReadOnly(filePath, true))
+                {
+                    cout << ">Warning: could not restore read-only attribute: " << outPath << endl;
+                }
+            }
+
+            if (!opened)
+            {
+                throw runtime_error("Failed to open file for writing: " + outPath);
+            }
+
             cout << ">Modified: " << outPath << endl;
+            if (clearedReadOnly)
+            {
+                cout << ">Read-only attribute temporarily removed to allow modification, then restored for: " << outPath << endl;
+            }
             modifiedCount++;
+        }
+        catch (const exception &e)
+        {
+            cout << ">Error: " << e.what() << endl;
+            cout << ">Close Steam and try again" << endl;
         }
     }
 

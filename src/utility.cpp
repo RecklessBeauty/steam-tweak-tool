@@ -5,6 +5,11 @@
 #include <filesystem>
 #include <vector>
 #include "steam-tweak-tool/utility.hpp"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 using namespace std;
 
@@ -23,7 +28,7 @@ string FileUtility::readFileContents(const string &filePath)
     return buffer.str();
 }
 
-// Get all game ids from the .acf file names in /steamapps/
+// Get all game ids from the appmanifest .acf file names in /steamapps/
 vector<int> FileUtility::getAcfID(const string &path)
 {
     vector<int> intVector;
@@ -32,12 +37,16 @@ vector<int> FileUtility::getAcfID(const string &path)
         if (entry.path().extension() == ".acf")
         {
             string filename = entry.path().filename().string();
-            // erasing appmanifest_
-            filename.erase(0, 12);
-            // erasing .acf
-            filename.erase(filename.size() - 4);
+            // Only appmanifest files are parsed, e.g. appmanifest_440.acf
+            if (filename.rfind("appmanifest_", 0) == 0)
+            {
+                // erasing appmanifest_
+                filename.erase(0, 12);
+                // erasing .acf
+                filename.erase(filename.size() - 4);
 
-            intVector.push_back(stoi(filename));
+                intVector.push_back(stoi(filename));
+            }
         }
     }
 
@@ -94,7 +103,10 @@ string FileUtility::promptSteamRoot()
         cout << ">Enter the path to your Steam root folder: " << endl;
         cout << ">Example: C:/Program Files (x86)/Steam" << endl;
         cout << ">";
-        getline(cin, root);
+        if (!getline(cin, root))
+        {
+            return "";
+        }
         cout << endl;
 
         replace(root.begin(), root.end(), '\\', '/');
@@ -150,6 +162,10 @@ string FileUtility::resolveSteamRoot()
             // 3. Prompt the user
             cout << ">Could not find Steam root folder" << endl;
             root = promptSteamRoot();
+            if (root.empty())
+            {
+                throw runtime_error("Steam path not provided");
+            }
         }
     }
 
@@ -254,4 +270,48 @@ string FileUtility::resolveMainRootFromLibraryDirectory(const string &path)
         }
     }
     return "";
+}
+
+bool FileUtility::isFileReadOnly(const string &filePath)
+{
+#ifdef _WIN32
+    filesystem::path path(filePath);
+    DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+    {
+        return false;
+    }
+    return (attributes & FILE_ATTRIBUTE_READONLY) != 0;
+#else
+    error_code ec;
+    filesystem::file_status status = filesystem::status(filePath, ec);
+    if (ec)
+    {
+        return false;
+    }
+    return (status.permissions() & filesystem::perms::owner_write) == filesystem::perms::none;
+#endif
+}
+
+bool FileUtility::setFileReadOnly(const string &filePath, bool readOnly)
+{
+#ifdef _WIN32
+    filesystem::path path(filePath);
+    DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+    {
+        return false;
+    }
+    DWORD newAttributes = readOnly ? (attributes | FILE_ATTRIBUTE_READONLY)
+                                   : (attributes & ~static_cast<DWORD>(FILE_ATTRIBUTE_READONLY));
+    // Always call SetFileAttributesW so the operation is applied even when the
+    // attribute already appears to be in the requested state.
+    return SetFileAttributesW(path.c_str(), newAttributes) != 0;
+#else
+    error_code ec;
+    filesystem::perm_options options = readOnly ? filesystem::perm_options::remove
+                                                : filesystem::perm_options::add;
+    filesystem::permissions(filePath, filesystem::perms::owner_write, options, ec);
+    return !ec;
+#endif
 }

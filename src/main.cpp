@@ -5,6 +5,7 @@
 #endif
 #include "steam-tweak-tool/cloud_disable.hpp"
 #include "steam-tweak-tool/autoupdate_disable.hpp"
+#include "steam-tweak-tool/gameupdate_appmanifest_disable.hpp"
 #include "steam-tweak-tool/utility.hpp"
 
 using namespace std;
@@ -29,11 +30,15 @@ int main()
             cout << ">Enter 0 to change Steam directory" << endl;
             cout << ">Enter 1 to disable Steam Cloud for all games (per-game settings)" << endl;
             cout << ">Enter 2 to disable Auto-updates and Unschedule all game and Workshop updates" << endl;
-            cout << ">Enter 3 to exit" << endl;
+            cout << ">Enter 3 to disable or enable Game updates" << endl;
+            cout << ">Enter 4 to exit" << endl;
             cout << ">Select your option: " << endl;
             string input;
             cout << ">";
-            getline(cin, input);
+            if (!getline(cin, input))
+            {
+                break;
+            }
             cout << endl;
 
             if (input == "0")
@@ -45,6 +50,11 @@ int main()
             }
             else if (input == "1")
             {
+                if (!filesystem::exists(userDataPath))
+                {
+                    cout << ">No userdata folder found, skipping Steam Cloud settings" << endl;
+                    continue;
+                }
                 vector<int> combinedAcfIds;
                 for (const string& lib : libraryPaths) {
                     string sAppsPath = lib + "/steamapps";
@@ -87,6 +97,11 @@ int main()
                 cout << ">Success" << endl;
             }
             else if (input == "3")
+            {
+                GameUpdateDisabler gameUpdateDisabler;
+                gameUpdateDisabler.run(libraryPaths);
+            }
+            else if (input == "4")
             {
                 break;
             }
