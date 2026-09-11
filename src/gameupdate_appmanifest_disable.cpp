@@ -14,43 +14,42 @@ namespace fs = std::filesystem;
 
 GameUpdateDisabler::GameUpdateDisabler() {}
 
-// Collect every appmanifest_<id>.acf across all library folders, sorted by app id.
-// Reuses FileUtility::getAcfID() and FileUtility::sortAcfID() from utility.cpp.
+// Collect every appmanifest_<id>.acf per library folder, in library order,
+// sorted by app id within each library. Reuses FileUtility::getAcfID() and
+// FileUtility::sortAcfID() from utility.cpp.
 vector<pair<int, string>> GameUpdateDisabler::collectAppManifests(const vector<string> &libraryPaths)
 {
     FileUtility fileUtility;
-    vector<int> combinedAcfIds;
+    vector<pair<int, string>> manifests;
 
     for (const string &lib : libraryPaths)
     {
         string sAppsPath = lib + "/steamapps";
-        if (fs::exists(sAppsPath))
+        if (!fs::exists(sAppsPath))
         {
-            try
-            {
-                vector<int> ids = fileUtility.getAcfID(sAppsPath);
-                combinedAcfIds.insert(combinedAcfIds.end(), ids.begin(), ids.end());
-            }
-            catch (const exception &)
-            {
-                // Skip libraries that cannot be read
-            }
+            continue;
         }
-    }
 
-    // sortAcfID sorts numerically and removes duplicates in place
-    fileUtility.sortAcfID(combinedAcfIds);
-
-    vector<pair<int, string>> manifests;
-    for (const int &id : combinedAcfIds)
-    {
-        for (const string &lib : libraryPaths)
+        vector<int> acfIds;
+        try
         {
-            string candidate = lib + "/steamapps/appmanifest_" + to_string(id) + ".acf";
+            acfIds = fileUtility.getAcfID(sAppsPath);
+        }
+        catch (const exception &)
+        {
+            // Skip libraries that cannot be read
+            continue;
+        }
+
+        // sortAcfID sorts numerically and removes duplicates in place
+        fileUtility.sortAcfID(acfIds);
+
+        for (const int &id : acfIds)
+        {
+            string candidate = sAppsPath + "/appmanifest_" + to_string(id) + ".acf";
             if (fs::exists(candidate))
             {
                 manifests.push_back(make_pair(id, candidate));
-                break;
             }
         }
     }
@@ -62,18 +61,24 @@ void GameUpdateDisabler::printManifestList(const vector<pair<int, string>> &mani
 {
     FileUtility fileUtility;
     cout << ">Appmanifest files found:" << endl;
+    string lastDirectory;
     int number = 1;
     for (const auto &manifest : manifests)
     {
         fs::path path(manifest.second);
+        string directory = path.parent_path().string();
+        if (directory != lastDirectory)
+        {
+            cout << endl << ">Processing directory: " << directory << endl;
+            lastDirectory = directory;
+        }
         bool readOnly = fileUtility.isFileReadOnly(manifest.second);
         cout << ">" << number << ". ["
              << (readOnly ? "READ-ONLY" : "WRITABLE")
-             << "] " << path.filename().string()
-             << "  (" << path.parent_path().string() << ")" << endl;
+             << "] " << path.filename().string() << endl;
         number++;
     }
-    cout << ">0. Back to main menu" << endl;
+    cout << endl << ">0. Back to main menu" << endl;
 }
 
 void GameUpdateDisabler::run(const vector<string> &libraryPaths)
